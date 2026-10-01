@@ -1,7 +1,7 @@
 # airbreda-dashboard — FastAPI app serving /site/{id}, /health and the HTML page on :8000.
 # The trained model is baked into the image: the dashboard version and the model version always
 # ship together, and inference has no network dependency (Day 4, ADR-006).
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
@@ -19,4 +19,4 @@ USER app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status < 500 else 1)"
 # --no-access-log: the app emits its own structured JSON access log (observability.py).
-CMD ["uvicorn", "dashboard:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+CMD ["uvicorn", "dashboard:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--log-level", "warning"]

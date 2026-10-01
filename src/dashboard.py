@@ -17,10 +17,10 @@ Where each field of /site/{id} comes from (required comment, Day 4):
     no2_ug_m3_predicted,
     no2_exceedance_risk           — predict.predict(total_intensity, hour_of_day) from predict.py,
                                     model.pkl baked into this image. The model was trained on the
-                                    *total* interchange intensity, so the prediction is computed
-                                    from the sum of the four sites' latest readings and is the same
-                                    for all four — a per-site prediction would need per-site
-                                    training data we do not have (see ADR-006).
+                                    *total* interchange intensity as an *hourly mean*, so the
+                                    prediction is computed from the four sites' trailing-hour mean
+                                    intensity and is the same for all four — a per-site prediction
+                                    would need per-site training data we do not have (ADR-006).
     prediction_basis              — exactly what went into predict(), for transparency.
 
 What happens if predict() raises:
@@ -40,6 +40,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import psycopg
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -54,8 +55,10 @@ from sites import MAINLINE_SITES, SITES, STATION_ID
 # anything older than ~3 h means missed runs; NDW is polled every 5 min, so 20 min = 4 misses.
 AIR_STALE_AFTER = timedelta(hours=3)
 NDW_STALE_AFTER = timedelta(minutes=20)
-# A site's latest reading older than this is not "current traffic" and is left out of the total.
-TRAFFIC_CURRENT_WINDOW = timedelta(minutes=15)
+# The model was trained on *hourly mean* intensity per site (build_training_data.hourly_traffic),
+# so the serving feature is the mean over the trailing hour of clean snapshots — not the single
+# latest minute, which has far higher variance and would be a different feature in disguise.
+PREDICTION_WINDOW = timedelta(hours=1)
 
 log = get_logger("dashboard")
 templates = Jinja2Templates(directory=str(Path(__file__).with_name("templates")))
@@ -82,7 +85,12 @@ app = FastAPI(title="AirBreda", version="1.0", lifespan=lifespan)
 @app.middleware("http")
 async def access_log(request: Request, call_next):
     started = time.perf_counter()
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception as exc:  # noqa: BLE001 — log the 500 as a structured event, then let Starlette answer
+        log_event(log, logging.ERROR, event="http_request", method=request.method, path=request.url.path,
+                  status=500, error=str(exc), duration_ms=round((time.perf_counter() - started) * 1000, 1))
+        raise
     log_event(log, logging.INFO, event="http_request", method=request.method, path=request.url.path,
               status=response.status_code, duration_ms=round((time.perf_counter() - started) * 1000, 1))
     return response
@@ -105,6 +113,7 @@ def latest_no2(conn) -> dict[str, Any] | None:
 
 
 def latest_traffic_all_sites(conn) -> dict[str, dict[str, Any]]:
+    """Newest clean snapshot per site — what the API shows as "current" intensity and speed."""
     rows = conn.execute(
         """
         SELECT DISTINCT ON (site_id) site_id, ndw_site_id, timestamp, intensity_veh_per_hr, speed_kmh
@@ -118,25 +127,36 @@ def latest_traffic_all_sites(conn) -> dict[str, dict[str, Any]]:
     }
 
 
-# --------------------------------------------------------------------------- prediction
-def prediction_for(traffic: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Build the model input from the latest reading of every site and run predict().
+def trailing_hour_traffic(conn, window: timedelta = PREDICTION_WINDOW) -> dict[str, dict[str, Any]]:
+    """Mean intensity per site over the trailing hour of clean snapshots — the model's feature."""
+    rows = conn.execute(
+        """
+        SELECT site_id, AVG(intensity_veh_per_hr), MAX(timestamp), COUNT(*)
+        FROM traffic_readings WHERE timestamp >= %s GROUP BY site_id
+        """,
+        (datetime.now(timezone.utc) - window,),
+    ).fetchall()
+    return {site: {"mean_intensity": float(mean), "latest": ts, "snapshots": int(n)} for site, mean, ts, n in rows}
 
-    Mirrors build_training_data.hourly_traffic: the feature is the *total* intensity over the
-    four sites; a slip road with no current reading counts as 0 (no vehicles), but if either
-    mainline direction has no current reading the feed is considered down and no prediction is
-    made. hour_of_day comes from the measurement time, not the wall clock, through the same
-    function used at training time."""
-    now = datetime.now(timezone.utc)
-    current = {s: r for s, r in traffic.items() if now - r["timestamp"] <= TRAFFIC_CURRENT_WINDOW}
-    basis: dict[str, Any] = {"sites_in_total": sorted(current)}
-    if not set(MAINLINE_SITES) <= current.keys():
+
+# --------------------------------------------------------------------------- prediction
+def prediction_for(hourly: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Build the model input from the trailing-hour means and run predict().
+
+    Mirrors build_training_data.hourly_traffic rule for rule: the feature is the *total* of the
+    four sites' hourly mean intensity; a slip road with no clean snapshot in the hour counts as 0
+    (no vehicles), but if either mainline direction has none the feed is considered down and no
+    prediction is made. hour_of_day comes from the newest measurement time, not the wall clock,
+    through the same function used at training time."""
+    basis: dict[str, Any] = {"sites_in_total": sorted(hourly), "window_minutes": int(PREDICTION_WINDOW.total_seconds() // 60)}
+    if not set(MAINLINE_SITES) <= hourly.keys():
         return {"no2_ug_m3_predicted": None, "no2_exceedance_risk": None,
-                "prediction_basis": basis, "prediction_error": "no current mainline traffic reading"}
-    total = sum(r["intensity_veh_per_hr"] for r in current.values())
-    latest_ts = max(r["timestamp"] for r in current.values())
+                "prediction_basis": basis, "prediction_error": "no mainline traffic reading in the last hour"}
+    total = round(sum(r["mean_intensity"] for r in hourly.values()))
+    latest_ts = max(r["latest"] for r in hourly.values())
     hour = model.hour_of_day_from(latest_ts)
-    basis.update({"total_intensity_veh_per_hr": total, "hour_of_day": hour, "as_of": latest_ts.isoformat()})
+    basis.update({"total_intensity_veh_per_hr": total, "hour_of_day": hour, "as_of": latest_ts.isoformat(),
+                  "snapshots": sum(r["snapshots"] for r in hourly.values())})
     try:
         out = model.predict(total, hour)
     except Exception as exc:  # noqa: BLE001 — see module docstring
@@ -152,23 +172,27 @@ def prediction_for(traffic: dict[str, dict[str, Any]]) -> dict[str, Any]:
 def site(site_id: str, request: Request) -> dict[str, Any]:
     if site_id not in SITES:
         raise HTTPException(status_code=404, detail=f"unknown site '{site_id}'; expected one of {sorted(SITES)}")
-    with transaction(request.app.state.settings) as conn:
-        no2 = latest_no2(conn)
-        traffic = latest_traffic_all_sites(conn)
+    try:
+        with transaction(request.app.state.settings) as conn:
+            no2 = latest_no2(conn)
+            traffic = latest_traffic_all_sites(conn)
+            hourly = trailing_hour_traffic(conn)
+    except psycopg.Error as exc:
+        log_event(log, logging.ERROR, event="site_db_unreachable", site_id=site_id, error=str(exc))
+        raise HTTPException(status_code=503, detail="database unreachable") from exc
     mine = traffic.get(site_id)
     if no2 is None or mine is None:
         raise HTTPException(status_code=503, detail="no readings ingested yet for this site")
 
-    body: dict[str, Any] = {
+    return {
         "site_id": site_id,
         "ndw_site_id": SITES[site_id],
         **no2,
         "intensity_veh_per_hr": mine["intensity_veh_per_hr"],
         "speed_kmh": mine["speed_kmh"],
-        **prediction_for(traffic),
+        **prediction_for(hourly),
         "timestamp": mine["timestamp"].isoformat(),
     }
-    return body
 
 
 @app.get("/health")

@@ -27,6 +27,7 @@ rsync -az --delete -e "ssh -i $KEY_FILE" \
   --include='Dockerfile*' --include='requirements*.txt' --include='docker-compose.yml' \
   --exclude='*' ./ "ec2-user@$VM_IP:$REMOTE/"
 scp -q -i "$KEY_FILE" .env "ec2-user@$VM_IP:$REMOTE/.env"
+"${SSH[@]}" "chmod 600 $REMOTE/.env"
 
 # The dashboard image bakes in the trained model; until train.py has produced it (Day 4) only the
 # two ingestion containers are deployed, so data collection can start on Day 3 as the course intends.
@@ -39,6 +40,7 @@ if [ "$BUILD" = 1 ]; then
     log "Building dashboard image on the VM"
     "${SSH[@]}" "cd $REMOTE && docker build -q -t airbreda-dashboard -f Dockerfile.dashboard ."
   fi
+  "${SSH[@]}" "docker image prune -f >/dev/null"   # dangling layers would fill the 8 GB disk
 fi
 
 log "Applying database migrations"
@@ -50,7 +52,7 @@ log "Installing cron schedule"
 if [ "$HAVE_MODEL" = 1 ]; then
   log "Restarting dashboard"
   # --restart unless-stopped + Docker enabled in systemd (user-data) = the dashboard survives a VM reboot (ADR-005).
-  "${SSH[@]}" "cd $REMOTE && (docker rm -f dashboard >/dev/null 2>&1 || true) && docker run -d --name dashboard --restart unless-stopped --env-file .env -p 8000:8000 airbreda-dashboard >/dev/null && sleep 3 && docker ps --format '{{.Names}}\t{{.Status}}'"
+  "${SSH[@]}" "cd $REMOTE && (docker rm -f dashboard >/dev/null 2>&1 || true) && docker run -d --name dashboard --restart unless-stopped --env-file .env -p 8000:8000 airbreda-dashboard >/dev/null && sleep 8 && docker ps --format '{{.Names}}\t{{.Status}}'"
   log "Smoke test"
   for path in /health /site/hrl; do
     printf '%s -> ' "$path"; curl -s -o /dev/null -w '%{http_code}\n' "http://$VM_IP:8000$path"

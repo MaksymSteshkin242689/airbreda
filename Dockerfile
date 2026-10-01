@@ -1,5 +1,5 @@
 # airbreda-air — Luchtmeetnet NO₂ ingestion. One run = one fetch; scheduled by cron on the VM.
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1

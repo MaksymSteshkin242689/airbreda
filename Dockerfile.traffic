@@ -1,6 +1,6 @@
 # airbreda-traffic — NDW traffic ingestion for the four A27 sites. One run = one feed snapshot;
 # scheduled every 5 minutes by cron on the VM.
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1

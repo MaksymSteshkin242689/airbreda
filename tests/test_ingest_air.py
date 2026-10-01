@@ -49,8 +49,16 @@ def test_flag_three_identical_consecutive_hours():
 
 def test_flag_run_continues_across_fetches_using_db_history():
     # the two previous hours in the database already read 15.0 → the first new row is the 3rd in a row
-    out = flag_stale_or_null(_series([15.0, 15.0, 20.0]), previous_values=[15.0, 15.0])
+    prev = [(pd.Timestamp("2024-01-14T22:00:00Z").to_pydatetime(), 15.0),
+            (pd.Timestamp("2024-01-14T23:00:00Z").to_pydatetime(), 15.0)]
+    out = flag_stale_or_null(_series([15.0, 15.0, 20.0]), previous=prev)
     assert out["is_flagged"].tolist() == [True, True, False]
+
+
+def test_identical_values_hours_apart_are_not_a_frozen_sensor():
+    ts = pd.to_datetime(["2024-01-15T00:00Z", "2024-01-15T05:00Z", "2024-01-15T11:00Z"], utc=True)
+    df = pd.DataFrame({"station_id": "NL10240", "timestamp": ts, "component": "NO2", "value": [15.0, 15.0, 15.0]})
+    assert not flag_stale_or_null(df)["is_flagged"].any()
 
 
 def test_flag_two_identical_values_is_not_stale():

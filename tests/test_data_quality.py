@@ -68,6 +68,36 @@ def test_stale_luchtmeetnet_run_is_written_flagged(conn):
     assert flags == [False, False, True]
 
 
+def test_null_reading_is_healed_when_value_arrives_later(conn):
+    from ingest_air import flag_stale_or_null, upsert_readings
+
+    ts = _unique_ts()
+    first = flag_stale_or_null(pd.DataFrame({"station_id": ["NL10240"], "timestamp": [pd.Timestamp(ts)],
+                                             "component": ["NO2"], "value": [None]}))
+    assert upsert_readings(conn, first) == 1
+    later = flag_stale_or_null(pd.DataFrame({"station_id": ["NL10240"], "timestamp": [pd.Timestamp(ts)],
+                                             "component": ["NO2"], "value": [21.5]}))
+    assert upsert_readings(conn, later) == 1  # healed, counted as written
+    value, flagged = conn.execute(
+        "SELECT value, is_flagged FROM sensor_readings WHERE station_id='NL10240' AND timestamp=%s", (ts,)).fetchone()
+    assert value == 21.5 and flagged is False
+    assert upsert_readings(conn, later) == 0  # and now a true no-op
+
+
+def test_bad_data_event_counted_once_per_reading(conn):
+    from db import bad_data_last_hour, record_bad_data
+    from observability import get_logger
+    from ingest_traffic import SiteReading
+
+    ts = _unique_ts()
+    before = bad_data_last_hour(conn, "NDW")
+    log = get_logger("test")
+    for _ in range(3):  # the same stalled feed minute seen by three cron runs
+        record_bad_data(conn, log, source="NDW", location="RWS01_MONIBAS_0270vwa0063ra", field="speed",
+                        value=-1.0, reason="sentinel_speed_minus_one", reading_ts=ts, site_id="vwa")
+    assert bad_data_last_hour(conn, "NDW") == before + 1
+
+
 def test_ndw_speed_minus_one_is_not_written_and_increments_counter(conn):
     from db import bad_data_last_hour
     from ingest_traffic import SiteReading, process_reading

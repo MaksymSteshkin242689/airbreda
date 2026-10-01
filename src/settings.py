@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
+from psycopg.conninfo import make_conninfo
+
 
 class ConfigError(RuntimeError):
     """A required environment variable is missing."""
@@ -55,17 +57,16 @@ class Settings:
 
     @property
     def dsn(self) -> str:
-        """libpq connection string for psycopg."""
-        return (
-            f"host={self.db_host} port={self.db_port} dbname={self.db_name} "
-            f"user={self.db_user} password={self.db_password} "
-            f"connect_timeout=10 sslmode={self.db_sslmode}"
+        """libpq connection string for psycopg (properly quoted for any password)."""
+        return make_conninfo(
+            host=self.db_host, port=self.db_port, dbname=self.db_name, user=self.db_user,
+            password=self.db_password, connect_timeout=10, sslmode=self.db_sslmode,
         )
 
     @property
     def database_url(self) -> str:
         """URL form of the same connection, as yoyo-migrations expects it."""
         return (
-            f"postgresql+psycopg://{quote(self.db_user)}:{quote(self.db_password)}"
+            f"postgresql+psycopg://{quote(self.db_user, safe='')}:{quote(self.db_password, safe='')}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}?sslmode={self.db_sslmode}"
         )

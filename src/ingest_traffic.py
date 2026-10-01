@@ -41,6 +41,7 @@ import io
 import logging
 import sys
 import time
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from xml.etree import ElementTree as ET
@@ -51,7 +52,7 @@ from botocore.exceptions import ClientError
 
 from db import record_bad_data, record_failure, record_success, transaction
 from observability import get_logger, log_event
-from settings import Settings
+from settings import ConfigError, Settings
 from sites import NDW_ID_TO_LABEL, SITES
 
 SOURCE = "ndw"
@@ -59,7 +60,6 @@ FEED_URL = "https://opendata.ndw.nu/snelheden_en_intensiteiten_meetgegevens.xml.
 REQUEST_TIMEOUT_S = 60
 MAX_ATTEMPTS = 3
 BAD_SPEED_SENTINEL = -1.0
-
 
 NS = {
     "roa": "http://datex2.eu/schema/3/roadTrafficData",
@@ -117,8 +117,8 @@ class SiteReading:
 
 
 # --------------------------------------------------------------------------- download + parse
-def open_feed_stream(url: str = FEED_URL):
-    """Open the gzipped feed as a streaming, decompressing file object. Retries transient
+def fetch_feed(url: str = FEED_URL) -> requests.Response:
+    """Open the gzipped feed as a streaming HTTP response (caller closes it). Retries transient
     network errors with backoff; raises after MAX_ATTEMPTS."""
     last_exc: Exception | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -126,7 +126,7 @@ def open_feed_stream(url: str = FEED_URL):
             resp = requests.get(url, stream=True, timeout=REQUEST_TIMEOUT_S)
             resp.raise_for_status()
             resp.raw.decode_content = False  # we gunzip ourselves
-            return gzip.GzipFile(fileobj=resp.raw)
+            return resp
         except requests.RequestException as exc:
             last_exc = exc
             log_event(log, logging.WARNING, event="fetch_retry", source="NDW", attempt=attempt, error=str(exc))
@@ -164,8 +164,10 @@ def parse_site_measurements(elem: ET.Element) -> SiteReading | None:
 
 
 def extract_readings(stream, wanted: set[str] | None = None) -> dict[str, SiteReading]:
-    """Stream-parse the feed with iterparse, keeping memory flat, and stop as soon as all
-    wanted sites have been seen (they are a tiny fraction of ~100k sites in the file)."""
+    """Stream-parse the feed with iterparse and stop as soon as all wanted sites have been seen.
+    Each <siteMeasurements> is cleared after inspection, so the parser never holds more than the
+    (emptied) element skeleton; in practice the four sites appear early in the file and the run
+    reads only a fraction of it (~2 s end to end on a t3.micro)."""
     wanted = set(wanted or SITES)
     found: dict[str, SiteReading] = {}
     for _event, elem in ET.iterparse(stream, events=("end",)):
@@ -186,9 +188,9 @@ def s3_key_for(reading: SiteReading) -> str:
 
 
 def append_to_s3_csv(s3, bucket: str, reading: SiteReading) -> str:
-    """Append the reading to its hourly CSV in the bucket (read-modify-write; there is exactly
-    one writer, the cron job). Idempotent on timestamp: re-running for the same minute does
-    not duplicate the row. Returns the object key."""
+    """Append the reading to its hourly CSV in the bucket (read-modify-write; the cron job is the
+    only writer, enforced with flock). Idempotent on timestamp: re-running for the same minute
+    does not duplicate the row. Returns the object key."""
     key = s3_key_for(reading)
     rows: list[dict[str, str]] = []
     try:
@@ -227,41 +229,55 @@ def insert_traffic_reading(conn, reading: SiteReading) -> int:
 
 
 def process_reading(conn, s3, bucket: str | None, reading: SiteReading) -> dict:
-    """Apply the data-quality rule and persist. The raw row always goes to the bucket; the
-    database only gets rows without the speed=-1 sentinel."""
-    key = append_to_s3_csv(s3, bucket, reading) if (s3 is not None and bucket) else None
+    """Apply the data-quality rule and persist. The raw row always goes to the bucket first; the
+    database only gets rows without the speed=-1 sentinel. An object-storage failure is logged
+    and does not stop the database write — the two stores fail independently."""
+    key = None
+    if s3 is not None and bucket:
+        try:
+            key = append_to_s3_csv(s3, bucket, reading)
+        except Exception as exc:  # noqa: BLE001 — credentials, permissions, network
+            log_event(log, logging.ERROR, event="s3_write_failed", source="NDW", site_id=reading.site_id,
+                      key=s3_key_for(reading), error=str(exc))
     if reading.has_bad_speed:
         record_bad_data(conn, log, source="NDW", location=reading.ndw_site_id, field="speed",
                         value=BAD_SPEED_SENTINEL, reason="sentinel_speed_minus_one",
-                        reading_ts=reading.timestamp)
+                        reading_ts=reading.timestamp, site_id=reading.site_id)
         return {"site_id": reading.site_id, "db_inserted": 0, "dropped": True, "s3_key": key}
     inserted = insert_traffic_reading(conn, reading)
     return {"site_id": reading.site_id, "db_inserted": inserted, "dropped": False, "s3_key": key}
 
 
 # --------------------------------------------------------------------------- main
+def _fail(settings: Settings | None, error: str, **fields) -> int:
+    """Log a structured failure and, when we have a database, record it for /health."""
+    log_event(log, logging.ERROR, event="fetch_failed", source="NDW", error=error, **fields)
+    if settings is not None:
+        try:
+            with transaction(settings) as conn:
+                record_failure(conn, SOURCE, error)
+        except Exception as exc:  # noqa: BLE001 — the database itself may be the problem
+            log_event(log, logging.ERROR, event="status_write_failed", source="NDW", error=str(exc))
+    return 1
+
+
 def run(settings: Settings | None, dry_run: bool = False, skip_s3: bool = False) -> int:
     """One ingestion cycle. Returns a process exit code. ``settings`` may be None for a dry run."""
     started = datetime.now(timezone.utc)
+    if not dry_run and not skip_s3 and not settings.s3_bucket:
+        raise ConfigError("S3_BUCKET is required (or pass --skip-s3 to write to the database only)")
+
     try:
-        with open_feed_stream() as stream:
+        with closing(fetch_feed()) as resp, gzip.GzipFile(fileobj=resp.raw) as stream:
             readings = extract_readings(stream)
-    except Exception as exc:
-        log_event(log, logging.ERROR, event="fetch_failed", source="NDW", error=str(exc))
-        if not dry_run:
-            with transaction(settings) as conn:
-                record_failure(conn, SOURCE, str(exc))
-        return 1
+    except Exception as exc:  # noqa: BLE001
+        return _fail(settings, str(exc))
 
     missing = sorted(set(SITES) - set(readings))
     for site in missing:
         log_event(log, logging.WARNING, event="site_missing", source="NDW", site_id=site, ndw_site_id=SITES[site])
     if not readings:
-        log_event(log, logging.ERROR, event="fetch_failed", source="NDW", error="none of the four sites present in feed")
-        if not dry_run:
-            with transaction(settings) as conn:
-                record_failure(conn, SOURCE, "none of the four sites present in feed")
-        return 1
+        return _fail(settings, "none of the four sites present in feed")
 
     if dry_run:
         for r in readings.values():
@@ -270,15 +286,17 @@ def run(settings: Settings | None, dry_run: bool = False, skip_s3: bool = False)
 
     bucket = None if skip_s3 else settings.s3_bucket
     s3 = None if skip_s3 else boto3.client("s3", region_name=settings.aws_region)
-
-    with transaction(settings) as conn:
-        for reading in readings.values():
-            outcome = process_reading(conn, s3, bucket, reading)
-            log_event(log, logging.INFO, event="fetch_success", source="NDW",
-                      location=reading.ndw_site_id, timestamp=reading.timestamp.isoformat(),
-                      intensity_veh_per_hr=reading.intensity_veh_per_hr, speed_kmh=reading.speed_kmh,
-                      lanes=reading.lanes, **outcome)
-        record_success(conn, SOURCE, started)
+    try:
+        with transaction(settings) as conn:
+            for reading in readings.values():
+                outcome = process_reading(conn, s3, bucket, reading)
+                log_event(log, logging.INFO, event="fetch_success", source="NDW",
+                          location=reading.ndw_site_id, timestamp=reading.timestamp.isoformat(),
+                          intensity_veh_per_hr=reading.intensity_veh_per_hr, speed_kmh=reading.speed_kmh,
+                          lanes=reading.lanes, **outcome)
+            record_success(conn, SOURCE, started)
+    except Exception as exc:  # noqa: BLE001 — DB down, TLS, bad credentials …
+        return _fail(settings, f"database write failed: {exc}")
 
     log_event(log, logging.INFO, event="run_complete", source="NDW", sites=sorted(readings),
               missing=missing, duration_s=round((datetime.now(timezone.utc) - started).total_seconds(), 2))

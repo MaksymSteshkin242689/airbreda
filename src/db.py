@@ -89,6 +89,7 @@ def record_bad_data(
     value: Any,
     reason: str,
     reading_ts: datetime | None = None,
+    **log_fields: Any,
 ) -> int:
     """Log a DATA_QUALITY_ERROR, persist it, bump the per-source counter and return the number
     of bad-data events for this source in the trailing hour. Crossing
@@ -108,7 +109,8 @@ def record_bad_data(
             return bad_data_last_hour(conn, key)
 
     log_event(logger, logging.WARNING, event="DATA_QUALITY_ERROR", source=source, location=location,
-              field=field, value=value, reason=reason)
+              field=field, value=value, reason=reason,
+              timestamp=reading_ts.isoformat() if reading_ts else None, **log_fields)
     conn.execute(
         "INSERT INTO bad_data_events (source, location, field, value, reason, reading_ts) VALUES (%s, %s, %s, %s, %s, %s)",
         (key, location, field, None if value is None else str(value), reason, reading_ts),

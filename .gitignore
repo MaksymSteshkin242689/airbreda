@@ -21,4 +21,7 @@ ndw/
 
 # jekyll
 docs/_site/
+
+# course handouts (local context only, not published)
+docs/project_context/
 .env.local
