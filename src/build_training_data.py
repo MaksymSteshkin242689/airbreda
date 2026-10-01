@@ -21,17 +21,18 @@ from __future__ import annotations
 
 import argparse
 import io
-import os
 import sys
 from pathlib import Path
 
 import boto3
 import pandas as pd
 
-from common import db_conn, get_logger, log_event
+from db import transaction
+from observability import get_logger, log_event
+from settings import Settings
 from predict import hour_of_day_from
+from sites import MAINLINE_SITES, SITES, STATION_ID
 
-SITES = ["hrl", "hrr", "vwd", "vwa"]
 OUT_PATH = Path("data/training_data.csv")
 log = get_logger("build_training_data")
 
@@ -41,9 +42,10 @@ def load_no2(conn) -> pd.DataFrame:
     rows = conn.execute(
         """
         SELECT timestamp, value FROM sensor_readings
-        WHERE station_id = 'NL10240' AND component = 'NO2' AND value IS NOT NULL AND NOT is_flagged
+        WHERE station_id = %s AND component = 'NO2' AND value IS NOT NULL AND NOT is_flagged
         ORDER BY timestamp
-        """
+        """,
+        (STATION_ID,),
     ).fetchall()
     df = pd.DataFrame(rows, columns=["no2_period_end_utc", "no2_ug_m3"])
     df["no2_period_end_utc"] = pd.to_datetime(df["no2_period_end_utc"], utc=True)
@@ -99,7 +101,7 @@ def hourly_traffic(minutes: pd.DataFrame) -> pd.DataFrame:
     snapshots = m.groupby("hour_start_utc")["timestamp"].nunique().rename("snapshots")
     sites_present = per_site.notna().sum(axis=1).rename("sites_present")
 
-    ok = per_site["hrl"].notna() & per_site["hrr"].notna()
+    ok = per_site[list(MAINLINE_SITES)].notna().all(axis=1)
     per_site = per_site[ok].fillna(0.0)
     hourly = per_site.add_prefix("intensity_")
     hourly["total_intensity_veh_per_hr"] = per_site.sum(axis=1).round(0)
@@ -109,13 +111,17 @@ def hourly_traffic(minutes: pd.DataFrame) -> pd.DataFrame:
     return hourly
 
 
+OUTPUT_COLUMNS = ["hour_start_utc", "no2_ug_m3", *[f"intensity_{s}" for s in SITES],
+                  "total_intensity_veh_per_hr", "hour_of_day", "snapshots", "sites_present"]
+
+
 def build(no2: pd.DataFrame, traffic_minutes: pd.DataFrame) -> pd.DataFrame:
     hourly = hourly_traffic(traffic_minutes)
+    if hourly.empty or no2.empty:
+        return pd.DataFrame(columns=OUTPUT_COLUMNS)
     df = hourly.merge(no2, on="hour_start_utc", how="inner").sort_values("hour_start_utc")
     df["hour_of_day"] = df["hour_start_utc"].apply(hour_of_day_from)
-    cols = ["hour_start_utc", "no2_ug_m3", *[f"intensity_{s}" for s in SITES],
-            "total_intensity_veh_per_hr", "hour_of_day", "snapshots", "sites_present"]
-    return df[cols].reset_index(drop=True)
+    return df[OUTPUT_COLUMNS].reset_index(drop=True)
 
 
 # --------------------------------------------------------------------------- main
@@ -125,12 +131,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=OUT_PATH)
     args = parser.parse_args(argv)
 
-    with db_conn() as conn:
+    settings = Settings.from_env()
+    with transaction(settings) as conn:
         no2 = load_no2(conn)
         if args.traffic_source == "db":
             traffic = load_traffic_from_db(conn)
         else:
-            traffic = load_traffic_from_s3(os.environ["S3_BUCKET"], os.getenv("AWS_REGION", "eu-north-1"))
+            traffic = load_traffic_from_s3(settings.s3_bucket, settings.aws_region)
 
     df = build(no2, traffic)
     args.out.parent.mkdir(parents=True, exist_ok=True)

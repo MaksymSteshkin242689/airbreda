@@ -34,10 +34,9 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import requests
 
-from common import (
-    db_conn, ensure_schema, get_logger, log_event,
-    record_bad_data, record_failure, record_success,
-)
+from db import record_bad_data, record_failure, record_success, transaction
+from observability import get_logger, log_event
+from settings import Settings
 
 STATION_ID = "NL10240"
 COMPONENT = "NO2"
@@ -144,8 +143,8 @@ def upsert_readings(conn, df: pd.DataFrame) -> int:
 
 
 # --------------------------------------------------------------------------- main
-def run(backfill_hours: int = 0, dry_run: bool = False) -> int:
-    """One ingestion cycle. Returns a process exit code."""
+def run(settings: Settings | None, backfill_hours: int = 0, dry_run: bool = False) -> int:
+    """One ingestion cycle. Returns a process exit code. ``settings`` may be None for a dry run."""
     started = datetime.now(timezone.utc)
     try:
         if backfill_hours:
@@ -165,8 +164,7 @@ def run(backfill_hours: int = 0, dry_run: bool = False) -> int:
     except Exception as exc:
         log_event(log, logging.ERROR, event="fetch_failed", source="Luchtmeetnet", station_id=STATION_ID, error=str(exc))
         if not dry_run:
-            with db_conn() as conn:
-                ensure_schema(conn)
+            with transaction(settings) as conn:
                 record_failure(conn, SOURCE, str(exc))
         return 1
 
@@ -181,8 +179,7 @@ def run(backfill_hours: int = 0, dry_run: bool = False) -> int:
         print(df.sort_values("timestamp", ascending=False).head(10).to_string(index=False))
         return 0
 
-    with db_conn() as conn:
-        ensure_schema(conn)
+    with transaction(settings) as conn:
         prev = previous_values_from_db(conn, before=df["timestamp"].min().to_pydatetime())
         df = flag_stale_or_null(df, previous_values=prev)
 
@@ -218,7 +215,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Also fetch this many hours of history (first run only).")
     parser.add_argument("--dry-run", action="store_true", help="Fetch and print; do not touch the database.")
     args = parser.parse_args(argv)
-    return run(backfill_hours=args.backfill_hours, dry_run=args.dry_run)
+    settings = None if args.dry_run else Settings.from_env()
+    return run(settings, backfill_hours=args.backfill_hours, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,38 @@
+# Local integration run of all three containers against the *cloud* database and bucket, exactly
+# as they run on the VM (Day 4: "test it locally, alongside your existing images, before it goes
+# anywhere near the VM"). There is no local database service here on purpose.
+#
+#   docker compose up --build                 # uses .env (cloud RDS + S3)
+#   docker compose --env-file .env.local up   # laptop Postgres on host.docker.internal:5440 (see README)
+#
+# The ingestion services run once and exit; on the VM cron restarts them on schedule
+# (infra/crontab.txt). The dashboard keeps running on :8000.
+services:
+  migrate:
+    build: { context: ., dockerfile: Dockerfile }
+    image: airbreda-air
+    env_file: ${ENV_FILE:-.env}
+    command: ["python", "migrate.py"]
+
+  air-ingest:
+    build: { context: ., dockerfile: Dockerfile }
+    image: airbreda-air
+    env_file: ${ENV_FILE:-.env}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  traffic-ingest:
+    build: { context: ., dockerfile: Dockerfile.traffic }
+    image: airbreda-traffic
+    env_file: ${ENV_FILE:-.env}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  dashboard:
+    build: { context: ., dockerfile: Dockerfile.dashboard }
+    image: airbreda-dashboard
+    env_file: ${ENV_FILE:-.env}
+    ports: ["8000:8000"]
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }

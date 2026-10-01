@@ -20,10 +20,10 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def conn():
-    from common import db_conn, ensure_schema
+    from db import transaction
+    from settings import Settings
 
-    with db_conn() as c:
-        ensure_schema(c)
+    with transaction(Settings.from_env()) as c:
         yield c
         c.rollback()  # never persist test rows
 
@@ -69,7 +69,7 @@ def test_stale_luchtmeetnet_run_is_written_flagged(conn):
 
 
 def test_ndw_speed_minus_one_is_not_written_and_increments_counter(conn):
-    from common import bad_data_last_hour, get_logger
+    from db import bad_data_last_hour
     from ingest_traffic import SiteReading, process_reading
 
     before = conn.execute("SELECT COALESCE(bad_data_count, 0) FROM ingestion_status WHERE source='ndw'").fetchone()

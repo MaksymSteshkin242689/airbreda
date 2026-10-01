@@ -1,0 +1,10 @@
+# AirBreda VM crontab (ec2-user). Installed by infra/deploy.sh with `crontab infra/crontab.txt`.
+# Cron has a minimal PATH, hence absolute /usr/bin/docker. Times are UTC (the VM clock).
+#
+# Luchtmeetnet publishes one validated hourly value; :05 gives the API time to publish the hour.
+5 * * * *    /usr/bin/docker run --rm --env-file /home/ec2-user/airbreda/.env airbreda-air     >> /home/ec2-user/airbreda/logs/air.log 2>&1
+# NDW publishes a per-minute snapshot; every 5 minutes is the balance between training-set
+# density and CPU/S3 cost on a 1 GB VM (see the polling comment in ingest_traffic.py).
+*/5 * * * *  /usr/bin/docker run --rm --env-file /home/ec2-user/airbreda/.env airbreda-traffic >> /home/ec2-user/airbreda/logs/traffic.log 2>&1
+# Keep container logs from growing without bound (the VM has an 8 GB disk).
+0 3 * * *    /usr/bin/find /home/ec2-user/airbreda/logs -name '*.log' -size +50M -exec truncate -s 0 {} \;

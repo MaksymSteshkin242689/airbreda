@@ -39,7 +39,6 @@ import csv
 import gzip
 import io
 import logging
-import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -50,10 +49,10 @@ import boto3
 import requests
 from botocore.exceptions import ClientError
 
-from common import (
-    db_conn, ensure_schema, get_logger, log_event,
-    record_bad_data, record_failure, record_success,
-)
+from db import record_bad_data, record_failure, record_success, transaction
+from observability import get_logger, log_event
+from settings import Settings
+from sites import NDW_ID_TO_LABEL, SITES
 
 SOURCE = "ndw"
 FEED_URL = "https://opendata.ndw.nu/snelheden_en_intensiteiten_meetgegevens.xml.gz"
@@ -61,14 +60,6 @@ REQUEST_TIMEOUT_S = 60
 MAX_ATTEMPTS = 3
 BAD_SPEED_SENTINEL = -1.0
 
-# Label → NDW measurement-site id. All four sit at the A27 interchange that station NL10240 monitors.
-SITES: dict[str, str] = {
-    "hrl": "RWS01_MONIBAS_0271hrl0063ra",  # mainline, direction 1
-    "hrr": "RWS01_MONIBAS_0271hrr0063ra",  # mainline, direction 2
-    "vwd": "RWS01_MONIBAS_0270vwd0063ra",  # entry slip road (traffic leaving Breda)
-    "vwa": "RWS01_MONIBAS_0270vwa0063ra",  # exit slip road (traffic entering Breda)
-}
-NDW_ID_TO_LABEL = {v: k for k, v in SITES.items()}
 
 NS = {
     "roa": "http://datex2.eu/schema/3/roadTrafficData",
@@ -249,7 +240,8 @@ def process_reading(conn, s3, bucket: str | None, reading: SiteReading) -> dict:
 
 
 # --------------------------------------------------------------------------- main
-def run(dry_run: bool = False, skip_s3: bool = False) -> int:
+def run(settings: Settings | None, dry_run: bool = False, skip_s3: bool = False) -> int:
+    """One ingestion cycle. Returns a process exit code. ``settings`` may be None for a dry run."""
     started = datetime.now(timezone.utc)
     try:
         with open_feed_stream() as stream:
@@ -257,8 +249,7 @@ def run(dry_run: bool = False, skip_s3: bool = False) -> int:
     except Exception as exc:
         log_event(log, logging.ERROR, event="fetch_failed", source="NDW", error=str(exc))
         if not dry_run:
-            with db_conn() as conn:
-                ensure_schema(conn)
+            with transaction(settings) as conn:
                 record_failure(conn, SOURCE, str(exc))
         return 1
 
@@ -268,8 +259,7 @@ def run(dry_run: bool = False, skip_s3: bool = False) -> int:
     if not readings:
         log_event(log, logging.ERROR, event="fetch_failed", source="NDW", error="none of the four sites present in feed")
         if not dry_run:
-            with db_conn() as conn:
-                ensure_schema(conn)
+            with transaction(settings) as conn:
                 record_failure(conn, SOURCE, "none of the four sites present in feed")
         return 1
 
@@ -278,11 +268,10 @@ def run(dry_run: bool = False, skip_s3: bool = False) -> int:
             print(r.csv_row())
         return 0
 
-    bucket = None if skip_s3 else os.environ["S3_BUCKET"]
-    s3 = None if skip_s3 else boto3.client("s3", region_name=os.getenv("AWS_REGION", "eu-north-1"))
+    bucket = None if skip_s3 else settings.s3_bucket
+    s3 = None if skip_s3 else boto3.client("s3", region_name=settings.aws_region)
 
-    with db_conn() as conn:
-        ensure_schema(conn)
+    with transaction(settings) as conn:
         for reading in readings.values():
             outcome = process_reading(conn, s3, bucket, reading)
             log_event(log, logging.INFO, event="fetch_success", source="NDW",
@@ -301,7 +290,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="Download, parse and print; touch neither S3 nor the database.")
     parser.add_argument("--skip-s3", action="store_true", help="Write to the database only (local development without AWS credentials).")
     args = parser.parse_args(argv)
-    return run(dry_run=args.dry_run, skip_s3=args.skip_s3)
+    settings = None if args.dry_run else Settings.from_env()
+    return run(settings, dry_run=args.dry_run, skip_s3=args.skip_s3)
 
 
 if __name__ == "__main__":

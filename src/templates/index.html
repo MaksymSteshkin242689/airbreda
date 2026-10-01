@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AirBreda — A27 / Breda</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c1f24; --muted:#667085; --line:#e4e7ec; --ok:#12805c; --warn:#b54708; --bad:#b42318; }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 15px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color:var(--ink); background:var(--bg); }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .label { color: var(--muted); font-size: 13px; }
+  .value { font-size: 30px; font-weight: 600; margin: 2px 0; font-variant-numeric: tabular-nums; }
+  .unit { font-size: 14px; color: var(--muted); font-weight: 400; }
+  .meta { font-size: 12px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 10px 12px; text-align: right; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; background: #fafbfc; border-top: 0; }
+  th:first-child, td:first-child { text-align: left; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  .bar { display:inline-block; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #12805c, #f79009 60%, #b42318); vertical-align: middle; margin-right: 6px; }
+  footer { margin-top: 18px; font-size: 12px; color: var(--muted); display:flex; gap: 16px; flex-wrap: wrap; }
+  code { font-size: 12px; background: #eef1f5; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>AirBreda — NO₂ at the A27 interchange</h1>
+  <p class="sub">Live readings from Luchtmeetnet station {{ station_id }} (Breda-Tilburgseweg) and NDW loop detectors at hectometre 63. Prediction from a linear regression trained on this pipeline's own data.</p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">Actual NO₂ (measured)</div>
+      <div class="value" id="actual">—<span class="unit"> µg/m³</span></div>
+      <div class="meta" id="actual-meta">waiting for data…</div>
+    </div>
+    <div class="card">
+      <div class="label">Predicted NO₂ (model)</div>
+      <div class="value" id="predicted">—<span class="unit"> µg/m³</span></div>
+      <div class="meta" id="predicted-meta">risk of exceeding {{ threshold }} µg/m³: <b id="risk">—</b></div>
+    </div>
+    <div class="card">
+      <div class="label">Total traffic congestion</div>
+      <div class="value" id="total">—<span class="unit"> veh/h</span></div>
+      <div class="meta">sum of the four sites' latest intensity</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Site</th><th>Intensity (veh/h)</th><th>Speed (km/h)</th><th>Predicted NO₂</th><th>Exceedance risk</th><th>Reading time (UTC)</th></tr>
+    </thead>
+    <tbody id="rows">
+      {% for site_id, ndw_id in sites.items() %}
+      <tr id="row-{{ site_id }}"><td><b>{{ site_id }}</b><br><span class="meta">{{ ndw_id }}</span></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <footer>
+    <span>Last updated: <b id="updated">never</b> (auto-refresh every 60 s)</span>
+    <span>Health: <b id="health">…</b></span>
+    <span>API: <code>GET /site/hrl</code> · <code>GET /health</code></span>
+  </footer>
+</main>
+
+<script>
+const SITES = {{ sites.keys() | list | tojson }};
+const fmt = (v, d = 1) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
+const fmtTime = iso => iso ? new Date(iso).toISOString().replace("T", " ").slice(0, 16) : "—";
+const ageMin = iso => iso ? Math.round((Date.now() - new Date(iso)) / 60000) : null;
+
+async function refresh() {
+  const results = await Promise.all(SITES.map(s => fetch(`/site/${s}`).then(r => r.ok ? r.json() : null).catch(() => null)));
+  const ok = results.filter(Boolean);
+  if (ok.length) {
+    const any = ok[0];
+    document.getElementById("actual").innerHTML = `${fmt(any.no2_ug_m3, 1)}<span class="unit"> µg/m³</span>`;
+    const age = ageMin(any.no2_timestamp);
+    document.getElementById("actual-meta").textContent =
+      `station ${any.no2_timestamp ? "reading for hour ending " + fmtTime(any.no2_timestamp) + " UTC" : ""}${age !== null ? ` · ${age} min ago` : ""}${any.no2_is_flagged ? " · flagged as stale" : ""}`;
+    document.getElementById("predicted").innerHTML = `${fmt(any.no2_ug_m3_predicted, 1)}<span class="unit"> µg/m³</span>`;
+    const risk = any.no2_exceedance_risk;
+    const riskEl = document.getElementById("risk");
+    riskEl.textContent = risk === null || risk === undefined ? (any.prediction_error || "—") : `${Math.round(risk * 100)} %`;
+    riskEl.className = risk === null ? "warn" : risk >= 0.5 ? "bad" : risk >= 0.25 ? "warn" : "ok";
+    const total = ok.reduce((acc, r) => acc + (r.intensity_veh_per_hr || 0), 0);
+    document.getElementById("total").innerHTML = `${total}<span class="unit"> veh/h</span>`;
+  }
+  SITES.forEach((s, i) => {
+    const r = results[i], row = document.getElementById(`row-${s}`);
+    const cells = row.querySelectorAll("td");
+    if (!r) { cells[1].textContent = cells[2].textContent = cells[3].textContent = cells[4].textContent = "—"; cells[5].innerHTML = '<span class="bad">no data</span>'; return; }
+    cells[1].textContent = r.intensity_veh_per_hr;
+    cells[2].textContent = fmt(r.speed_kmh, 0);
+    cells[3].textContent = fmt(r.no2_ug_m3_predicted, 1);
+    const pct = r.no2_exceedance_risk === null ? null : Math.round(r.no2_exceedance_risk * 100);
+    cells[4].innerHTML = pct === null ? '<span class="warn">n/a</span>' : `<span class="bar" style="width:${Math.max(4, pct * 0.6)}px"></span>${pct} %`;
+    const age = ageMin(r.timestamp);
+    cells[5].innerHTML = `${fmtTime(r.timestamp)} <span class="${age > 20 ? "bad" : age > 10 ? "warn" : "ok"}">(${age} min ago)</span>`;
+  });
+  document.getElementById("updated").textContent = new Date().toLocaleTimeString();
+  try {
+    const h = await fetch("/health").then(r => r.json());
+    const el = document.getElementById("health");
+    el.textContent = `${h.status} · Luchtmeetnet ${fmtTime(h.luchtmeetnet?.last_successful_fetch)} · NDW ${fmtTime(h.ndw?.last_successful_fetch)} · bad data 24h: ${h.luchtmeetnet?.bad_data_last_24h ?? "?"} / ${h.ndw?.bad_data_last_24h ?? "?"}`;
+    el.className = h.status === "ok" ? "ok" : h.status === "degraded" ? "warn" : "bad";
+  } catch (e) { document.getElementById("health").textContent = "unreachable"; }
+}
+refresh();
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>

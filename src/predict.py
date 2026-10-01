@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -59,19 +58,25 @@ def exceedance_risk(predicted_no2: float, threshold: float = THRESHOLD_UG_M3, st
     return float(1.0 / (1.0 + np.exp(-steepness * (predicted_no2 - threshold))))
 
 
-@lru_cache(maxsize=1)
-def load_model(path: Path = MODEL_PATH):
-    if not path.exists():
-        raise FileNotFoundError(f"model file not found at {path}; run train.py first")
-    return joblib.load(path)
+_models: dict[Path, object] = {}
 
 
-def predict(total_intensity_veh_per_hr: float, hour_of_day: int) -> dict[str, float]:
+def load_model(path: Path | None = None):
+    """Load (once) and cache the fitted estimator at ``path`` (default: MODEL_PATH)."""
+    path = Path(path or MODEL_PATH)
+    if path not in _models:
+        if not path.exists():
+            raise FileNotFoundError(f"model file not found at {path}; run train.py first")
+        _models[path] = joblib.load(path)
+    return _models[path]
+
+
+def predict(total_intensity_veh_per_hr: float, hour_of_day: int, model_path: Path | None = None) -> dict[str, float]:
     """Return ``{"no2_ug_m3_predicted": float, "no2_exceedance_risk": float}``.
 
     Predictions are clipped at 0: a linear model can extrapolate below zero for very low traffic
     at night, and a negative concentration is not a thing."""
-    model = load_model()
+    model = load_model(model_path)
     raw = float(model.predict(make_features(total_intensity_veh_per_hr, hour_of_day))[0])
     predicted = max(0.0, raw)
     return {
