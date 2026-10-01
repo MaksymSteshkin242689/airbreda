@@ -27,12 +27,15 @@ MODEL_DIR = Path("model")
 MIN_ROWS_FOR_HOLDOUT = 30  # below this a held-out test set is too small to mean anything
 
 
-def train(df: pd.DataFrame, seed: int = 42) -> tuple[LinearRegression, dict]:
+MIN_ROWS = len(FEATURES) + 1  # the mathematical minimum for an exact fit; anything less is a dry run
+
+
+def train(df: pd.DataFrame, seed: int = 42, min_rows: int = MIN_ROWS) -> tuple[LinearRegression, dict]:
     df = df.dropna(subset=[*FEATURES, TARGET])
     X, y = df[FEATURES], df[TARGET]
     n = len(df)
-    if n < len(FEATURES) + 1:
-        raise SystemExit(f"only {n} rows — need at least {len(FEATURES) + 1} to fit {len(FEATURES)} coefficients")
+    if n < min_rows:
+        raise SystemExit(f"only {n} rows — need at least {min_rows} to fit {len(FEATURES)} coefficients")
 
     holdout = n >= MIN_ROWS_FOR_HOLDOUT
     if holdout:
@@ -76,10 +79,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--data", type=Path, default=DATA_PATH)
     parser.add_argument("--out-dir", type=Path, default=MODEL_DIR)
+    parser.add_argument("--min-rows", type=int, default=MIN_ROWS,
+                        help=f"refuse to train on fewer rows (default {MIN_ROWS}); lower only for a pipeline dry run")
     args = parser.parse_args(argv)
 
     df = pd.read_csv(args.data)
-    model, metrics = train(df)
+    model, metrics = train(df, min_rows=args.min_rows)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, args.out_dir / "model.pkl")
