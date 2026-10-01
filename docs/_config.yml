@@ -1,0 +1,13 @@
+title: AirBreda — Architecture Design Document
+description: ADR-format architecture document for the AirBreda cloud data platform (System Design & Cloud Platforms, BUas ADSAI Y3)
+remote_theme: pages-themes/primer@v0.6.0
+plugins:
+  - jekyll-remote-theme
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter_opts:
+    disable: true
+# Course material is kept in the repo for context but is not part of the published document.
+exclude:
+  - project_context
