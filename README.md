@@ -5,7 +5,7 @@ AirBreda is a small cloud data platform that ingests two live Dutch open-data st
 them, trains a regression model on its own accumulated readings, and serves a dashboard + JSON API.
 
 - **Architecture Design Document (ADRs):** [`docs/`](docs/) — published on GitHub Pages.
-- **Live system:** `http://<vm-ip>:8000` — `GET /`, `GET /site/{hrl|hrr|vwd|vwa}`, `GET /health`.
+- **Live system:** `http://51.20.190.183:8000` — `GET /`, `GET /site/{hrl|hrr|vwd|vwa}`, `GET /health`.
 
 ## Data sources
 

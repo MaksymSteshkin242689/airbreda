@@ -5,7 +5,7 @@ title: AirBreda — Architecture Design Document
 # AirBreda — Architecture Design Document
 
 <p class="adr-meta">System Design &amp; Cloud Platforms · BUas ADSAI Year 3 · Max Steshkin · October 2026<br>
-Live system: <a href="http://VM_IP_PLACEHOLDER:8000">http://VM_IP_PLACEHOLDER:8000</a> · Repository: <a href="REPO_URL_PLACEHOLDER">GitHub</a></p>
+Live system: <a href="http://51.20.190.183:8000">http://51.20.190.183:8000</a> · Repository: <a href="https://github.com/MaksymSteshkin242689/airbreda">GitHub</a></p>
 
 **Question the system answers:** does traffic congestion at the A27 interchange near Breda drive NO₂ exceedances at the nearby Luchtmeetnet station? AirBreda ingests two live Dutch open-data streams, stores them, trains a regression model on its own accumulated readings, and serves the result as a JSON API and a dashboard.
 
