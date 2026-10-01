@@ -55,7 +55,7 @@ set -a; . ./.env.local; set +a
 ./venv/bin/python src/migrate.py                 # apply migrations
 ./venv/bin/python src/ingest_air.py --backfill-hours 72
 ./venv/bin/python src/ingest_traffic.py          # add --skip-s3 without AWS credentials
-./venv/bin/python -m pytest                      # 23 tests; DB tests run when DB_HOST is set
+./venv/bin/python -m pytest                      # 40 tests; the 6 DB tests run when DB_HOST is set
 
 ./venv/bin/python src/build_training_data.py     # → data/training_data.csv
 ./venv/bin/python src/train.py                   # → model/model.pkl, model/metrics.json
