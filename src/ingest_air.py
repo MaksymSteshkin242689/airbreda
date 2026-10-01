@@ -216,7 +216,7 @@ def run(settings: Settings | None, backfill_hours: int = 0, dry_run: bool = Fals
                 record_bad_data(conn, log, source="Luchtmeetnet", location=STATION_ID, field=COMPONENT,
                                 value=None if pd.isna(row.value) else float(row.value),
                                 reason="null" if pd.isna(row.value) else "stale_or_null",
-                                reading_ts=row.timestamp.to_pydatetime())
+                                reading_ts=row.timestamp.to_pydatetime(), station_id=STATION_ID)
             written = upsert_readings(conn, df)
             record_success(conn, SOURCE, started)
     except Exception as exc:  # noqa: BLE001 — DB down, TLS, bad credentials …

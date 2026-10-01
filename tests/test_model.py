@@ -83,3 +83,15 @@ def test_train_refuses_too_few_rows():
     df = pd.DataFrame({"no2_ug_m3": [10.0, 12.0], "total_intensity_veh_per_hr": [100, 200], "hour_of_day": [1, 2]})
     with pytest.raises(SystemExit):
         train(df)
+
+
+def test_shipped_model_loads_and_predicts():
+    """Guards the artefact that is actually baked into the dashboard image."""
+    shipped = Path("model/model.pkl")
+    if not shipped.exists():
+        pytest.skip("model/model.pkl not trained yet")
+    out = predict.predict(2500, 8, model_path=shipped)
+    assert 0.0 <= out["no2_ug_m3_predicted"] <= 200.0
+    assert 0.0 <= out["no2_exceedance_risk"] <= 1.0
+    metrics = json.loads(Path("model/metrics.json").read_text())
+    assert metrics["features"] == predict.FEATURES
