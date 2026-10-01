@@ -11,7 +11,9 @@ RUN pip install --no-cache-dir -r requirements-dashboard.txt
 
 COPY src/settings.py src/observability.py src/db.py src/sites.py src/predict.py src/dashboard.py ./
 COPY src/templates templates
-COPY model/model.pkl model/metrics.json model/
+# The whole directory, so the image also builds before the first training run; without a model
+# the API still serves the real readings and reports prediction_error (see dashboard.py docstring).
+COPY model/ model/
 
 RUN useradd --create-home --uid 1000 app
 USER app
