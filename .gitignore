@@ -1,0 +1,24 @@
+# secrets
+.env
+*.pem
+infra/resources.env
+
+# python
+__pycache__/
+*.pyc
+venv/
+.venv/
+.pytest_cache/
+
+# IDE / OS
+.idea/
+.DS_Store
+
+# local data
+ndw/
+*.xml
+*.xml.gz
+
+# jekyll
+docs/_site/
+.env.local

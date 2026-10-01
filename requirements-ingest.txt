@@ -1,0 +1,5 @@
+# Runtime deps for the two ingestion containers (kept small: no sklearn/fastapi here).
+requests==2.32.3
+psycopg[binary]==3.2.3
+boto3==1.35.49
+pandas==2.2.3
