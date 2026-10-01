@@ -17,7 +17,8 @@ from typing import Any, Iterator
 
 import psycopg
 
-SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+# Relative to the working directory: the project root locally, /app in the containers.
+SCHEMA_PATH = Path(os.getenv("SCHEMA_PATH", "db/schema.sql"))
 BAD_DATA_THRESHOLD_PER_HOUR = 10
 
 

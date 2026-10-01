@@ -1,5 +1,6 @@
 -- AirBreda relational schema (PostgreSQL). Applied idempotently by common.ensure_schema()
 -- on every ingestion run, so a fresh database needs no manual setup.
+-- Manual apply: psql "$DATABASE_URL" -f db/schema.sql
 
 -- Parsed hourly air-quality readings from Luchtmeetnet. One row per (station, hour, component).
 -- The composite primary key is what makes ingestion idempotent: re-fetching the same hour
