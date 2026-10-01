@@ -23,7 +23,7 @@ for _ in $(seq 1 30); do "${SSH[@]}" 'docker info >/dev/null 2>&1' && break; sle
 log "Syncing sources"
 "${SSH[@]}" "mkdir -p $REMOTE/logs"
 rsync -az --delete -e "ssh -i $KEY_FILE" \
-  --include='src/***' --include='db/***' --include='model/***' --include='infra/crontab.txt' \
+  --include='src/***' --include='db/***' --include='model/***' --include='infra/' --include='infra/crontab.txt' \
   --include='Dockerfile*' --include='requirements*.txt' --include='docker-compose.yml' \
   --exclude='*' ./ "ec2-user@$VM_IP:$REMOTE/"
 scp -q -i "$KEY_FILE" .env "ec2-user@$VM_IP:$REMOTE/.env"
