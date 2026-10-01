@@ -91,6 +91,13 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def source_key(source: str) -> str:
+    """Database key for a source. Logs use the human-readable spelling from the course
+    ("NDW", "Luchtmeetnet"); the tables use one canonical lowercase key so that the bad-data
+    counter and the last-successful-fetch timestamp always land on the same row."""
+    return source.strip().lower()
+
+
 def record_success(conn: psycopg.Connection, source: str, fetched_at: datetime | None = None) -> None:
     fetched_at = fetched_at or utcnow()
     conn.execute(
@@ -102,7 +109,7 @@ def record_success(conn: psycopg.Connection, source: str, fetched_at: datetime |
                 last_attempt = EXCLUDED.last_attempt,
                 last_error = NULL
         """,
-        (source, fetched_at, fetched_at),
+        (source_key(source), fetched_at, fetched_at),
     )
 
 
@@ -114,7 +121,7 @@ def record_failure(conn: psycopg.Connection, source: str, error: str) -> None:
         ON CONFLICT (source) DO UPDATE
             SET last_attempt = EXCLUDED.last_attempt, last_error = EXCLUDED.last_error
         """,
-        (source, utcnow(), error[:2000]),
+        (source_key(source), utcnow(), error[:2000]),
     )
 
 
@@ -127,28 +134,41 @@ def record_bad_data(
     field: str,
     value: Any,
     reason: str,
+    reading_ts: datetime | None = None,
 ) -> int:
     """Log a DATA_QUALITY_ERROR, persist it, bump the per-source counter and return the number
     of bad-data events for this source in the trailing hour. Crossing
     BAD_DATA_THRESHOLD_PER_HOUR emits a single ERROR-level BAD_DATA_THRESHOLD_EXCEEDED event
-    (the alertable log line Day 2 asks for instead of a cloud alarm)."""
+    (the alertable log line Day 2 asks for instead of a cloud alarm).
+
+    ``reading_ts`` is the measurement timestamp of the offending reading. When given, the same
+    (source, location, field, reading) is counted once, no matter how many cron runs see it —
+    a feed that stops updating must not inflate the counter every five minutes."""
+    key = source_key(source)
+    if reading_ts is not None:
+        seen = conn.execute(
+            "SELECT 1 FROM bad_data_events WHERE source=%s AND location=%s AND field=%s AND reading_ts=%s LIMIT 1",
+            (key, location, field, reading_ts),
+        ).fetchone()
+        if seen:
+            return bad_data_last_hour(conn, key)
     log_event(
         logger, logging.WARNING,
         event="DATA_QUALITY_ERROR", source=source, location=location,
         field=field, value=value, reason=reason,
     )
     conn.execute(
-        "INSERT INTO bad_data_events (source, location, field, value, reason) VALUES (%s, %s, %s, %s, %s)",
-        (source, location, field, None if value is None else str(value), reason),
+        "INSERT INTO bad_data_events (source, location, field, value, reason, reading_ts) VALUES (%s, %s, %s, %s, %s, %s)",
+        (key, location, field, None if value is None else str(value), reason, reading_ts),
     )
     conn.execute(
         """
         INSERT INTO ingestion_status (source, bad_data_count) VALUES (%s, 1)
         ON CONFLICT (source) DO UPDATE SET bad_data_count = ingestion_status.bad_data_count + 1
         """,
-        (source,),
+        (key,),
     )
-    last_hour = bad_data_last_hour(conn, source)
+    last_hour = bad_data_last_hour(conn, key)
     if last_hour == BAD_DATA_THRESHOLD_PER_HOUR + 1:  # fire once, on the crossing
         log_event(logger, logging.ERROR, event="BAD_DATA_THRESHOLD_EXCEEDED", source=source, count=last_hour)
     return last_hour
@@ -157,7 +177,7 @@ def record_bad_data(
 def bad_data_last_hour(conn: psycopg.Connection, source: str) -> int:
     row = conn.execute(
         "SELECT count(*) FROM bad_data_events WHERE source = %s AND detected_at >= %s",
-        (source, utcnow() - timedelta(hours=1)),
+        (source_key(source), utcnow() - timedelta(hours=1)),
     ).fetchone()
     return int(row[0]) if row else 0
 

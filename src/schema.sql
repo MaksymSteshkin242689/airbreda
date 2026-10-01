@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS bad_data_events (
     field       VARCHAR(20),
     value       TEXT,
     reason      VARCHAR(40),
+    reading_ts  TIMESTAMPTZ,                               -- measurement time of the offending reading
     detected_at TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
+ALTER TABLE bad_data_events ADD COLUMN IF NOT EXISTS reading_ts TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS bad_data_events_src_ts_idx ON bad_data_events (source, detected_at DESC);
+CREATE INDEX IF NOT EXISTS bad_data_events_reading_idx ON bad_data_events (source, location, field, reading_ts);

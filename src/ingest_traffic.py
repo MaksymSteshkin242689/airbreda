@@ -241,7 +241,8 @@ def process_reading(conn, s3, bucket: str | None, reading: SiteReading) -> dict:
     key = append_to_s3_csv(s3, bucket, reading) if (s3 is not None and bucket) else None
     if reading.has_bad_speed:
         record_bad_data(conn, log, source="NDW", location=reading.ndw_site_id, field="speed",
-                        value=BAD_SPEED_SENTINEL, reason="sentinel_speed_minus_one")
+                        value=BAD_SPEED_SENTINEL, reason="sentinel_speed_minus_one",
+                        reading_ts=reading.timestamp)
         return {"site_id": reading.site_id, "db_inserted": 0, "dropped": True, "s3_key": key}
     inserted = insert_traffic_reading(conn, reading)
     return {"site_id": reading.site_id, "db_inserted": inserted, "dropped": False, "s3_key": key}
@@ -284,7 +285,7 @@ def run(dry_run: bool = False, skip_s3: bool = False) -> int:
         ensure_schema(conn)
         for reading in readings.values():
             outcome = process_reading(conn, s3, bucket, reading)
-            log_event(log, logging.INFO, event="fetch_success", source="NDW", site_id=reading.site_id,
+            log_event(log, logging.INFO, event="fetch_success", source="NDW",
                       location=reading.ndw_site_id, timestamp=reading.timestamp.isoformat(),
                       intensity_veh_per_hr=reading.intensity_veh_per_hr, speed_kmh=reading.speed_kmh,
                       lanes=reading.lanes, **outcome)

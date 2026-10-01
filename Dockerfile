@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 COPY requirements-ingest.txt .
 RUN pip install --no-cache-dir -r requirements-ingest.txt
 
-COPY common.py schema.sql ingest_air.py ./
+COPY src/common.py src/schema.sql src/ingest_air.py ./
 
 # Run unprivileged: the container only needs outbound HTTPS and a database connection.
 RUN useradd --create-home --uid 1000 app

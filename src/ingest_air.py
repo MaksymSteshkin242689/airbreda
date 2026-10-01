@@ -198,7 +198,8 @@ def run(backfill_hours: int = 0, dry_run: bool = False) -> int:
         for row in new_rows[new_rows["is_flagged"]].itertuples(index=False):
             record_bad_data(conn, log, source="Luchtmeetnet", location=STATION_ID, field=COMPONENT,
                             value=None if pd.isna(row.value) else float(row.value),
-                            reason="null" if pd.isna(row.value) else "stale_or_null")
+                            reason="null" if pd.isna(row.value) else "stale_or_null",
+                            reading_ts=row.timestamp.to_pydatetime())
 
         inserted = upsert_readings(conn, df)
         latest = df.sort_values("timestamp").iloc[-1]

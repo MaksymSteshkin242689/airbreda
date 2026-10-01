@@ -8,7 +8,7 @@ anywhere.
 """
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
@@ -30,7 +30,7 @@ def conn():
 
 def _unique_ts():
     # far-future, unique timestamps so tests never collide with real ingested data
-    return datetime(2099, 1, 1, tzinfo=timezone.utc) + pd.Timedelta(hours=uuid.uuid4().int % 100_000)
+    return datetime(2099, 1, 1, tzinfo=timezone.utc) + timedelta(hours=uuid.uuid4().int % 100_000)
 
 
 def test_null_luchtmeetnet_reading_is_written_flagged_not_dropped(conn):
@@ -56,7 +56,7 @@ def test_stale_luchtmeetnet_run_is_written_flagged(conn):
     from ingest_air import flag_stale_or_null, upsert_readings
 
     base = _unique_ts()
-    ts = [pd.Timestamp(base) + pd.Timedelta(hours=i) for i in range(3)]
+    ts = [pd.Timestamp(base + timedelta(hours=i)) for i in range(3)]
     df = pd.DataFrame({"station_id": "NL10240", "timestamp": ts, "component": "NO2", "value": [17.0, 17.0, 17.0]})
     df = flag_stale_or_null(df)
     upsert_readings(conn, df)
@@ -72,7 +72,7 @@ def test_ndw_speed_minus_one_is_not_written_and_increments_counter(conn):
     from common import bad_data_last_hour, get_logger
     from ingest_traffic import SiteReading, process_reading
 
-    before = conn.execute("SELECT COALESCE(bad_data_count, 0) FROM ingestion_status WHERE source='NDW'").fetchone()
+    before = conn.execute("SELECT COALESCE(bad_data_count, 0) FROM ingestion_status WHERE source='ndw'").fetchone()
     before_count = before[0] if before else 0
     before_hour = bad_data_last_hour(conn, "NDW")
 
@@ -88,7 +88,7 @@ def test_ndw_speed_minus_one_is_not_written_and_increments_counter(conn):
         "SELECT count(*) FROM traffic_readings WHERE site_id='hrl' AND timestamp=%s", (ts,)
     ).fetchone()[0] == 0, "speed=-1 row must not reach traffic_readings"
 
-    after = conn.execute("SELECT bad_data_count FROM ingestion_status WHERE source='NDW'").fetchone()[0]
+    after = conn.execute("SELECT bad_data_count FROM ingestion_status WHERE source='ndw'").fetchone()[0]
     assert after == before_count + 1
     assert bad_data_last_hour(conn, "NDW") == before_hour + 1
 
