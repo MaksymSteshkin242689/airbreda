@@ -23,7 +23,7 @@ flowchart LR
   end
 
   subgraph AWS["AWS account 163120011993 · region eu-north-1 (Stockholm) · default VPC"]
-    subgraph VM["EC2 t3.micro · Amazon Linux 2023 · Docker<br/>SG: 22 from admin IP · 8000 from 0.0.0.0/0<br/>IAM instance role: s3:Get/Put/ListBucket on own bucket only"]
+    subgraph VM["EC2 t3.micro · Amazon Linux 2023 · Docker · IAM instance role (own S3 bucket only)<br/>security group: 22 from admin IP, 8000 from anywhere"]
       AIR["airbreda-air<br/>cron 5 * * * *<br/>ingest_air.py"]
       TRF["airbreda-traffic<br/>cron */5 * * * *<br/>ingest_traffic.py"]
       DASH["airbreda-dashboard<br/>FastAPI :8000 · restart unless-stopped<br/>model.pkl baked in"]

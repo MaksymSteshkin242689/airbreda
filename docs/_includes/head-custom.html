@@ -15,5 +15,11 @@
   .mermaid { text-align: center; margin: 1.5em 0; }
   .markdown-body h2 { margin-top: 2.2em; border-bottom: 1px solid #d0d7de; }
   .adr-meta { color: #57606a; font-size: 0.9em; }
-  @media print { .markdown-body { max-width: none; } h2 { page-break-before: always; } }
+  @media print {
+    .markdown-body { max-width: none; padding: 0; font-size: 12px; line-height: 1.45; }
+    .markdown-body h1 { font-size: 22px; } .markdown-body h2 { font-size: 17px; margin-top: 1.4em; } .markdown-body h3 { font-size: 14px; }
+    .markdown-body table, .mermaid, .adr-meta + p { page-break-inside: avoid; }
+    .mermaid svg { max-height: 420px; }
+    a { color: inherit; text-decoration: none; }
+  }
 </style>
