@@ -1,44 +1,44 @@
 {
-  "trained_at_utc": "2026-10-02T10:10:06+00:00",
+  "trained_at_utc": "2026-10-02T19:00:30+00:00",
   "algorithm": "sklearn.linear_model.LinearRegression",
   "features": [
     "total_intensity_veh_per_hr",
     "hour_of_day"
   ],
   "target": "no2_ug_m3",
-  "rows_total": 12,
-  "rows_train": 12,
+  "rows_total": 20,
+  "rows_train": 20,
   "rows_test": 0,
   "evaluation": "in-sample (too few rows for a meaningful hold-out)",
-  "r2": 0.3344,
-  "mae_ug_m3": 2.593,
-  "r2_in_sample": 0.3344,
-  "mae_in_sample_ug_m3": 2.593,
+  "r2": 0.0265,
+  "mae_ug_m3": 5.305,
+  "r2_in_sample": 0.0265,
+  "mae_in_sample_ug_m3": 5.305,
   "coefficients": {
-    "total_intensity_veh_per_hr": 0.001478,
-    "hour_of_day": 0.028802
+    "total_intensity_veh_per_hr": -0.000664,
+    "hour_of_day": -0.004576
   },
-  "intercept": 29.6156,
+  "intercept": 33.2631,
   "target_stats": {
-    "mean": 33.26,
-    "std": 3.97,
-    "min": 27.29,
-    "max": 37.01
+    "mean": 31.16,
+    "std": 6.43,
+    "min": 18.13,
+    "max": 45.33
   },
   "feature_stats": {
     "total_intensity_veh_per_hr": {
-      "mean": 2278.75,
+      "mean": 3085.45,
       "min": 366.0,
-      "max": 4576.0
+      "max": 4828.0
     },
     "hour_of_day": {
-      "mean": 9.67,
+      "mean": 11.6,
       "min": 0.0,
       "max": 23.0
     }
   },
-  "hours_above_threshold": 0,
+  "hours_above_threshold": 1,
   "threshold_ug_m3": 40.0,
   "data_first_hour_utc": "2026-10-01 19:00:00+00:00",
-  "data_last_hour_utc": "2026-10-02 08:00:00+00:00"
+  "data_last_hour_utc": "2026-10-02 16:00:00+00:00"
 }
