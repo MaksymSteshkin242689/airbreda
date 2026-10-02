@@ -158,13 +158,13 @@ If a broker is needed later — a second consumer, or ingestion outgrowing one V
 
 <p class="adr-meta">Day 4 · Status: accepted</p>
 
-**Context.** The API must return `no2_exceedance_risk ∈ [0, 1]` per site, from a model trained on the pipeline's own data. Traffic collection started on 1 October 2026 at 19:35 UTC, so at training time the pipeline had 12 joined hourly rows — below the ~24 the course calls "a day's worth" and all from autumn weekday hours.
+**Context.** The API must return `no2_exceedance_risk ∈ [0, 1]` per site, from a model trained on the pipeline's own data. Traffic collection started on 1 October 2026 at 19:35 UTC, so at training time the pipeline had 20 joined hourly rows — below the ~24 the course calls "a day's worth" and all from autumn weekday hours.
 
 **The model.** `LinearRegression` on two features: `total_intensity_veh_per_hr` (sum of the four sites' hourly mean intensity) and `hour_of_day` (local time). With a few dozen rows, two coefficients are the right amount of model: anything more flexible would fit noise and could not be sanity-checked, whereas a linear model's coefficients *are* the sanity check — the traffic coefficient must be positive. A full year of data (≈ 8 700 rows) with weather features would justify a gradient-boosted model with a time-based hold-out.
 
 | rows | evaluation | R² | MAE (µg/m³) | coef. intensity | coef. hour | intercept |
 |---|---|---|---|---|---|---|
-| 12 | in-sample (too few rows for a meaningful hold-out) | 0.334 | 2.59 | +0.00148 | +0.029 | 29.62 |
+| 20 | in-sample (too few rows for a meaningful hold-out) | 0.026 | 5.30 | -0.00066 | -0.005 | 33.26 |
 
 With this little data the R² is an in-sample fit statistic, not a generalisation estimate; the MAE is in the municipality's units and is the number to watch; a positive intensity coefficient confirms the direction, not causality. This model demonstrates the pipeline, it is not production-grade — see §6.
 
